@@ -25,6 +25,33 @@ class client {
         flush();
     }
 
+    function watch() {
+        $run = true;
+        $count = 0;
+        do {
+            $sec = 1;
+            $n = null;
+            $read = [$this->socket];
+            if (socket_select($read, $n, $n, $sec) === false) { $run = false; }
+            else {
+                $count++;
+                foreach ($read as $r) {
+                    $data = socket_read($r, 576);
+                    if ($data === false || $data === 0 || $data === '') { $run = false; break; }
+                    if (substr($data, 0, 7) === 'auth://') {
+                        echo 'Auth Request : ' . $data . PHP_EOL;
+                        $sig = hash_hmac('sha1', substr($data, 7), $this->key, false);
+                        socket_write($r, 'auth://' . $sig);
+                        continue;
+                    }
+                    echo 'Message : "' . $data . '"' . PHP_EOL;
+                }
+            }
+            if (connection_status() !== 0) { $run = false; }
+        } while($run);
+        socket_close($this->socket);
+    }
+
     function run () {
         header('Cache-Control: no-cache', true);
         header('Content-Type: text/event-stream', true);
