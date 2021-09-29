@@ -8,8 +8,11 @@ class srv {
     private $close = false;
     private $tcp = null;
     private $clients = [];
+    private $clientsAuth = [];
     private $msg = null;
     private $backlog = [];
+    private $key = 'some-random-key';
+    private $lastClientKey = 0;
 
     function __construct(
             $udp_address = '127.0.0.1',
@@ -20,6 +23,7 @@ class srv {
             $backlog_size = 50
         ) {
         $this->backlog_size = $backlog_size;
+        $this->key = $key;
         pcntl_async_signals(true);
         pcntl_signal(SIGTERM, [$this, 'close']);
         pcntl_signal(SIGINT, [$this, 'close']);
@@ -38,7 +42,6 @@ class srv {
     }
 
     function close() {
-        echo 'Closing started' . PHP_EOL;
         $this->close = true;
         $this->msg->close();
         foreach ($this->clients as $k => $client) {
@@ -50,22 +53,22 @@ class srv {
         if ($this->tcp !== null) {
             socket_close($this->tcp);
         }
-        echo 'Closing done' . PHP_EOL;
     }
 
     function accept() {
-        echo 'Accept started' . PHP_EOL;
         $client = socket_accept($this->tcp);
         if ($client) {
             socket_set_nonblock($client);
-            $this->clients[] = $client;
+            $k = $this->lastClientKey++;
+            $this->clients[$k] = $client;
+            $authPayload = base64_encode(random_bytes(40));
+            if (socket_write($client, 'auth://' . $authPayload) !== false) {
+                $this->clientsAuth[$k] = [ 'payload' => $authPayload, 'auth' => false, 'ctime' => time() ];
+            }
         }
-        echo 'Accept done' . PHP_EOL;
-
     }
 
     function read($socket) {
-        echo 'Read started' . PHP_EOL;
         $data = $this->msg->receive($addr, $port);
         if ($data === null) { return; }
         /* if backlog is full, drop oldest message */
@@ -74,22 +77,32 @@ class srv {
             array_shift($this->backlog); 
         }
         array_push($this->backlog, $data);
-        echo 'Read done' . PHP_EOL;
+    }
+
+    function clean_unauth_client () {
+        $now = time();
+        foreach ($this->clients as $k => $client) {
+            if (!isset($this->clientsAuth[$k])) { $this->end_client($k); continue; }
+            if ($this->clientsAuth[$k]['auth']) { continue; }
+            if ($now - $this->clientsAuth[$k]['ctime'] > 10) {
+                echo 'Client ' . $k . ' waited too long for auth' . PHP_EOL;
+                $this->end_client($k);
+            }
+        }
     }
 
     function write() {
-        echo 'Write started' . PHP_EOL;
+        $now = time();
         $msg = array_shift($this->backlog);
-        echo 'Messgage ' . $msg  . PHP_EOL;
-        foreach ($this->clients as $client) {
+        foreach ($this->clients as $k => $client) {
             socket_write($client, $msg);
         }
-        echo 'Write done' . PHP_EOL;
     }
 
     function end_client($k) {
         $client = $this->clients[$k];
         unset($this->clients[$k]);
+        unset($this->clientsAuth[$client]);
         if ($client) {
             socket_close($client);
         }
@@ -101,7 +114,10 @@ class srv {
             $n = null;
             $sec = 1;
         
-            if (@socket_select($read, $n, $n, $sec) < 1) { continue; }
+            if (@socket_select($read, $n, $n, $sec) < 1) {
+                $this->clean_unauth_client();
+                continue; 
+            }
             foreach ($read as $socket) {
                 if ($this->tcp === $socket) {
                     $this->accept();
@@ -118,6 +134,17 @@ class srv {
                     if ($data === false || $data === '' || $data === 0) {
                         $this->end_client($k);
                         continue;
+                    }
+
+                    if (substr($data, 0, 7) === 'auth://') {
+                        if (!isset($this->clientsAuth[$k])) { $this->end_client($k); continue; }
+                        if ($this->clientsAuth[$k]['auth']) { continue; }
+                        if (hash_hmac('sha1', $this->clientsAuth[$k]['payload'], $this->key, false) === trim(substr($data, 7))) {
+                            $this->clientsAuth[$k]['auth'] = true;
+                            echo 'Client ' . $k . ' auth done' . PHP_EOL;
+                        } else {
+                            $this->end_client($k);
+                        }
                     }
                     
                     continue;
