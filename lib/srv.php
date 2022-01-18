@@ -1,6 +1,6 @@
 <?php
-
 namespace wesrv;
+require('const.php');
 
 use Exception;
 
@@ -62,7 +62,7 @@ class srv {
             $k = $this->lastClientKey++;
             $this->clients[$k] = $client;
             $authPayload = base64_encode(random_bytes(40));
-            if (socket_write($client, 'auth://' . $authPayload) !== false) {
+            if (socket_write($client, 'auth://' . $authPayload . WMSG_SEPARATOR) !== false) {
                 $this->clientsAuth[$k] = [ 'payload' => $authPayload, 'auth' => false, 'ctime' => time() ];
             }
         }
@@ -76,7 +76,7 @@ class srv {
             echo 'Drop message' . PHP_EOL;
             array_shift($this->backlog); 
         }
-        array_push($this->backlog, $data);
+        array_push($this->backlog, $data . WMSG_SEPARATOR);
     }
 
     function clean_unauth_client () {
@@ -92,7 +92,6 @@ class srv {
     }
 
     function write() {
-        $now = time();
         $msg = array_shift($this->backlog);
         foreach ($this->clients as $k => $client) {
             socket_write($client, $msg);
