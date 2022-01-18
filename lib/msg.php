@@ -13,7 +13,7 @@ class msg {
     function __construct(string $address = '127.0.0.1', int $port = 8531, string $key = 'some-random-key') {
         $this->address = $address;
         $this->port = $port;
-        $this->$key = $key;
+        $this->key = $key;       
 
         $this->socket = socket_create(AF_INET, SOCK_DGRAM, SOL_UDP);
         if (!$this->socket) { throw new Exception('Socket creation failed'); }
