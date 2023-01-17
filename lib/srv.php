@@ -13,6 +13,7 @@ class srv {
     private $backlog = [];
     private $key = 'some-random-key';
     private $lastClientKey = 0;
+    private $backlog_size = 50;
 
     function __construct(
             $udp_address = '127.0.0.1',
@@ -68,7 +69,7 @@ class srv {
         }
     }
 
-    function read($socket) {
+    function read() {
         $data = $this->msg->receive($addr, $port);
         if ($data === null) { return; }
         /* if backlog is full, drop oldest message */
@@ -81,7 +82,7 @@ class srv {
 
     function clean_unauth_client () {
         $now = time();
-        foreach ($this->clients as $k => $client) {
+        foreach ($this->clients as $k => $_) {
             if (!isset($this->clientsAuth[$k])) { $this->end_client($k); continue; }
             if ($this->clientsAuth[$k]['auth']) { continue; }
             if ($now - $this->clientsAuth[$k]['ctime'] > 10) {
@@ -99,9 +100,10 @@ class srv {
     }
 
     function end_client($k) {
+        if (empty($this->clients[$k])) { return; }
         $client = $this->clients[$k];
         unset($this->clients[$k]);
-        unset($this->clientsAuth[$client]);
+        if (!empty($this->clientsAuth[$k])) { unset($this->clientsAuth[$k]); }
         if ($client) {
             socket_close($client);
         }
@@ -124,7 +126,7 @@ class srv {
                 }
 
                 if ($this->msg->socket === $socket) {
-                    $this->read($socket);
+                    $this->read();
                     continue;
                 }
 
